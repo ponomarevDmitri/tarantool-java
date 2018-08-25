@@ -10,6 +10,7 @@ import java.nio.channels.SocketChannel;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -161,6 +162,9 @@ public abstract class TarantoolBase<Result> extends AbstractTarantoolOps<Integer
 
     protected List<SQLMetaData> getSQLMetadata() {
         List<Map<Integer, Object>> meta = (List<Map<Integer, Object>>) body.get(Key.SQL_METADATA.getId());
+	if (meta == null){
+	        return Collections.emptyList();
+	}
         List<SQLMetaData> values = new ArrayList<SQLMetaData>(meta.size());
         for(Map<Integer,Object> c:meta ) {
            values.add(new SQLMetaData((String) c.get(Key.SQL_FIELD_NAME.getId())));

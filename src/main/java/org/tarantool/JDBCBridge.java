@@ -22,7 +22,11 @@ public class JDBCBridge {
 
     protected JDBCBridge(List<TarantoolBase.SQLMetaData> sqlMetadata, List<List<Object>> rows) {
         this.sqlMetadata = sqlMetadata;
-        this.rows = rows;
+	if (rows == null) {
+	    this.rows = Collections.emptyList();
+	} else {
+	    this.rows = rows;
+	}
         columnsByName = new LinkedHashMap<String, Integer>((int) Math.ceil(sqlMetadata.size() / 0.75), 0.75f);
         for (int i = 0; i < sqlMetadata.size(); i++) {
             columnsByName.put(sqlMetadata.get(i).getName(), i + 1);
