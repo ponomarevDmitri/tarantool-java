@@ -2,10 +2,10 @@ package org.tarantool;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 
 import static org.tarantool.TarantoolClientImpl.StateHelper.CLOSED;
 
@@ -39,13 +39,13 @@ public class TarantoolClusterClient extends TarantoolClientImpl {
         super(provider, config);
 
         this.executor = config.executor == null ?
-            Executors.newSingleThreadExecutor() : config.executor;
+                Executors.newSingleThreadExecutor() : config.executor;
     }
 
     @Override
-    protected boolean isDead(FutureImpl<?> q) {
+    protected boolean isDead(CompletableFuture<?> q) {
         if ((state.getState() & CLOSED) != 0) {
-            q.setError(new CommunicationException("Connection is dead", thumbstone));
+            fail(q, new CommunicationException("Connection is dead", thumbstone));
             return true;
         }
         Exception err = thumbstone;
@@ -56,39 +56,41 @@ public class TarantoolClusterClient extends TarantoolClientImpl {
     }
 
     @Override
-    public Future<?> exec(Code code, Object... args) {
+    protected CompletableFuture<?> doExec(Code code, Object[] args) {
         validateArgs(args);
-        FutureImpl<?> q = makeFuture(syncId.incrementAndGet(), code, args);
+        long sid = syncId.incrementAndGet();
+        CompletableFuture<?> q = makeFuture(sid, code, args);
+
         if (isDead(q)) {
             return q;
         }
-        futures.put(q.getId(), q);
+        futures.put(sid, q);
         if (isDead(q)) {
-            futures.remove(q.getId());
+            futures.remove(sid);
             return q;
         }
         try {
-            write(code, q.getId(), null, args);
+            write(code, sid, null, args);
         } catch (Exception e) {
-            futures.remove(q.getId());
+            futures.remove(sid);
             fail(q, e);
         }
         return q;
     }
 
     @Override
-    protected void fail(FutureImpl<?> q, Exception e) {
+    protected void fail(CompletableFuture<?> q, Exception e) {
         checkFail(q, e);
     }
 
-    protected boolean checkFail(FutureImpl<?> q, Exception e) {
+    protected boolean checkFail(CompletableFuture<?> q, Exception e) {
         assert q instanceof ExpirableOp<?>;
         if (!isTransientError(e) || ((ExpirableOp<?>)q).hasExpired(System.currentTimeMillis())) {
-            q.setError(e);
+            q.completeExceptionally(e);
             return true;
         } else {
             assert retries != null;
-            retries.put(q.id, (ExpirableOp<?>)q);
+            retries.put(((ExpirableOp<?>) q).getId(), (ExpirableOp<?>)q);
             return false;
         }
     }
@@ -103,7 +105,7 @@ public class TarantoolClusterClient extends TarantoolClientImpl {
         }
 
         for (ExpirableOp<?> op : retries.values()) {
-            op.setError(e);
+            op.completeExceptionally(e);
         }
     }
 
@@ -117,11 +119,9 @@ public class TarantoolClusterClient extends TarantoolClientImpl {
         return false;
     }
 
-    protected FutureImpl<?> makeFuture(long id, Code code, Object...args) {
-        return new ExpirableOp(id,
-            ((TarantoolClusterClientConfig)config).operationExpiryTimeMillis,
-            code,
-            args);
+    protected CompletableFuture<?> makeFuture(long id, Code code, Object...args) {
+        int expireTime = ((TarantoolClusterClientConfig) config).operationExpiryTimeMillis;
+        return new ExpirableOp(id, expireTime, code, args);
     }
 
     /**
@@ -157,12 +157,17 @@ public class TarantoolClusterClient extends TarantoolClientImpl {
     /**
      * Holds operation code and arguments for retry.
      */
-    private class ExpirableOp<V> extends FutureImpl<V> {
+    private class ExpirableOp<V> extends CompletableFuture<V> {
         /** Moment in time when operation is not considered for retry. */
         final private long deadline;
 
         /** Arguments of operation. */
         final private Object[] args;
+
+        final private long id;
+
+        final private Code code;
+
 
         /**
          *
@@ -172,9 +177,10 @@ public class TarantoolClusterClient extends TarantoolClientImpl {
          * @param args Operation arguments.
          */
         ExpirableOp(long id, int expireTime, Code code, Object...args) {
-            super(id, code);
             this.deadline = System.currentTimeMillis() + expireTime;
             this.args = args;
+            this.id = id;
+            this.code = code;
         }
 
         boolean hasExpired(long now) {
@@ -183,6 +189,14 @@ public class TarantoolClusterClient extends TarantoolClientImpl {
 
         public Object[] getArgs() {
             return args;
+        }
+
+        public long getId() {
+            return id;
+        }
+
+        public Code getCode() {
+            return code;
         }
     }
 }

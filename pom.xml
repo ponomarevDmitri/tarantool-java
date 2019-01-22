@@ -5,10 +5,12 @@
     <artifactId>connector</artifactId>
     <version>1.7.6-SNAPSHOT</version>
     <packaging>jar</packaging>
+
     <properties>
-      <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-      <junit.jupiter.version>5.3.1</junit.jupiter.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <junit.jupiter.version>5.3.1</junit.jupiter.version>
     </properties>
+
     <name>Tarantool Connector for Java</name>
     <url>https://github.com/tarantool/tarantool-java</url>
     <description>Tarantool client for java</description>
@@ -24,7 +26,7 @@
         <url>https://github.com/tarantool/tarantool-java</url>
         <connection>scm:git:git://github.com/tarantool/tarantool-java.git</connection>
         <developerConnection>scm:git:git@github.com:tarantool/tarantool-java.git</developerConnection>
-      </scm>
+    </scm>
 
     <developers>
         <developer>
@@ -40,16 +42,18 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.2</version>
+                <version>3.7.0</version>
                 <configuration>
-                    <source>1.6</source>
-                    <target>1.6</target>
+                    <source>8</source>
+                    <target>8</target>
                 </configuration>
             </plugin>
+
             <plugin>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>2.22.0</version>
             </plugin>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
@@ -88,14 +92,14 @@
                     <!-- https://github.com/trautonen/coveralls-maven-plugin/issues/112 -->
                     <dependency>
                         <groupId>javax.xml.bind</groupId>
-                            <artifactId>jaxb-api</artifactId>
-                            <version>2.3.1</version>
+                        <artifactId>jaxb-api</artifactId>
+                        <version>2.3.1</version>
                     </dependency>
                 </dependencies>
             </plugin>
+
         </plugins>
     </build>
-
     <dependencies>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -122,4 +126,5 @@
         <artifactId>oss-parent</artifactId>
         <version>7</version>
     </parent>
+
 </project>
