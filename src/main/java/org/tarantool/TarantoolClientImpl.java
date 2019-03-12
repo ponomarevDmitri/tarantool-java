@@ -1,8 +1,11 @@
 package org.tarantool;
 
-import java.io.DataInputStream;
+import org.tarantool.server.BinaryProtoUtils;
+import org.tarantool.server.ReadableViaSelectorChannel;
+import org.tarantool.server.TarantoolBinaryPacket;
+import org.tarantool.server.TarantoolInstanceConnectionMeta;
+
 import java.io.IOException;
-import java.net.SocketException;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 import java.util.Iterator;
@@ -39,6 +42,8 @@ public class TarantoolClientImpl extends TarantoolBase<Future<?>> implements Tar
      * Write properties
      */
     protected SocketChannel channel;
+    protected ReadableViaSelectorChannel readChannel;
+
     protected ByteBuffer sharedBuffer;
     protected ByteBuffer writerBuffer;
     protected ReentrantLock bufferLock = new ReentrantLock(false);
@@ -133,43 +138,23 @@ public class TarantoolClientImpl extends TarantoolBase<Future<?>> implements Tar
 
     protected void connect(final SocketChannel channel) throws Exception {
         try {
-            DataInputStream is = new DataInputStream(cis = new ByteBufferInputStream(channel));
-            byte[] bytes = new byte[64];
-            is.readFully(bytes);
-            String firstLine = new String(bytes);
-            if (!firstLine.startsWith("Tarantool")) {
-                CommunicationException e = new CommunicationException("Welcome message should starts with tarantool " +
-                        "but starts with '" + firstLine + "'", new IllegalStateException("Invalid welcome packet"));
+            TarantoolInstanceConnectionMeta connectMeta = BinaryProtoUtils
+                    .connect(channel, config.username, config.password);
 
-                close(e);
-                throw e;
-            }
-            is.readFully(bytes);
-            this.salt = new String(bytes);
-            if (config.username != null && config.password != null) {
-                writeFully(channel, createAuthPacket(config.username, config.password));
-                readPacket(is);
-                Long code = (Long) headers.get(Key.CODE.getId());
-                if (code != 0) {
-                    throw serverError(code, body.get(Key.ERROR.getId()));
-                }
-            }
-            this.is = is;
+            this.salt = connectMeta.getSalt();
+            this.serverVersion = connectMeta.getServerVersion();
         } catch (IOException e) {
             try {
-                is.close();
+                channel.close();
             } catch (IOException ignored) {
-
             }
-            try {
-                cis.close();
-            } catch (IOException ignored) {
 
-            }
             throw new CommunicationException("Couldn't connect to tarantool", e);
         }
         channel.configureBlocking(false);
         this.channel = channel;
+        this.readChannel = new ReadableViaSelectorChannel(channel);
+
         bufferLock.lock();
         try {
             sharedBuffer.clear();
@@ -286,7 +271,7 @@ public class TarantoolClientImpl extends TarantoolBase<Future<?>> implements Tar
 
     protected void write(Code code, Long syncId, Long schemaId, Object... args)
             throws Exception {
-        ByteBuffer buffer = createPacket(code, syncId, schemaId, args);
+        ByteBuffer buffer = BinaryProtoUtils.createPacket(code, syncId, schemaId, args);
 
         if (directWrite(buffer)) {
             return;
@@ -357,14 +342,15 @@ public class TarantoolClientImpl extends TarantoolBase<Future<?>> implements Tar
         try {
             while (!Thread.currentThread().isInterrupted()) {
                 try {
-                    long code;
-                    readPacket(is);
-                    code = (Long) headers.get(Key.CODE.getId());
+                    TarantoolBinaryPacket packet = BinaryProtoUtils.readPacket(readChannel);
+
+                    Map<Integer, Object> headers = packet.getHeaders();
+
                     Long syncId = (Long) headers.get(Key.SYNC.getId());
                     CompletableFuture<?> future = futures.remove(syncId);
                     stats.received++;
                     wait.decrementAndGet();
-                    complete(code, future);
+                    complete(packet, future);
                 } catch (Exception e) {
                     die("Cant read answer", e);
                     return;
@@ -411,29 +397,29 @@ public class TarantoolClientImpl extends TarantoolBase<Future<?>> implements Tar
         q.completeExceptionally(e);
     }
 
-    protected void complete(long code, CompletableFuture<?> q) {
+    protected void complete(TarantoolBinaryPacket packet, CompletableFuture<?> q) {
         if (q != null) {
+            long code = packet.getCode();
             if (code == 0) {
-                List<?> data = (List<?>) body.get(Key.DATA.getId());
 
                 if (code == Code.EXECUTE.getId()) {
-                    completeSql(q, (List<List<?>>) data);
+                    completeSql(q, packet);
                 } else {
-                    ((CompletableFuture) q).complete(data);
+                    ((CompletableFuture) q).complete(packet.getBody().get(Key.DATA.getId()));
                 }
             } else {
-                Object error = body.get(Key.ERROR.getId());
+                Object error = packet.getBody().get(Key.ERROR.getId());
                 fail(q, serverError(code, error));
             }
         }
     }
 
-    protected void completeSql(CompletableFuture<?> q, List<List<?>> data) {
-        Long rowCount = getSqlRowCount();
+    protected void completeSql(CompletableFuture<?> q, TarantoolBinaryPacket pack) {
+        Long rowCount = SqlProtoUtils.getSqlRowCount(pack);
         if (rowCount!=null) {
             ((CompletableFuture) q).complete(rowCount);
         } else {
-            List<Map<String, Object>> values = readSqlResult(data);
+            List<Map<String, Object>> values = SqlProtoUtils.readSqlResult(pack);
             ((CompletableFuture) q).complete(values);
         }
     }
@@ -455,12 +441,7 @@ public class TarantoolClientImpl extends TarantoolBase<Future<?>> implements Tar
     }
 
     protected void writeFully(SocketChannel channel, ByteBuffer buffer) throws IOException {
-        long code = 0;
-        while (buffer.remaining() > 0 && (code = channel.write(buffer)) > -1) {
-        }
-        if (code < 0) {
-            throw new SocketException("write failed code: " + code);
-        }
+        BinaryProtoUtils.writeFully(channel, buffer);
     }
 
     @Override
@@ -488,16 +469,9 @@ public class TarantoolClientImpl extends TarantoolBase<Future<?>> implements Tar
         if (writer != null) {
             writer.interrupt();
         }
-        if (is != null) {
+        if (readChannel != null) {
             try {
-                is.close();
-            } catch (IOException ignored) {
-
-            }
-        }
-        if (cis != null) {
-            try {
-                cis.close();
+                readChannel.close();//also closes this.channel
             } catch (IOException ignored) {
 
             }

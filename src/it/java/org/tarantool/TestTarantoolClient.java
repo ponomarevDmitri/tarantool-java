@@ -1,5 +1,7 @@
 package org.tarantool;
 
+import org.tarantool.server.TarantoolBinaryPacket;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -81,8 +83,9 @@ public class TestTarantoolClient {
         }
 
         @Override
-        protected void complete(long code, CompletableFuture<?> q) {
-            super.complete(code, q);
+        protected void complete(TarantoolBinaryPacket packet, CompletableFuture<?> q) {
+            super.complete(packet, q);
+            long code = packet.getCode();
             if (code != 0) {
                 System.out.println(code);
             }
